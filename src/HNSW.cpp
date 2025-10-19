@@ -14,7 +14,6 @@ float Q_magv( float* vector, int size){
     for(int i = 0; i < size; i++){
         mag += vector[i] * vector[i]; 
     }
-    
     long i;
     float x2, y;
     float threehalfs = 1.5F;
@@ -70,6 +69,7 @@ class HNSW {
         uint8_t level = std::floorf(-std::logf((float) rand() / RAND_MAX) * m_lvl);
         toInsert->h_lvl = level;
         toInsert->niblings = new AriNode**[level];
+        
         auto compare = [toInsert, this](AriNode* a, AriNode * b){
             float dot_a = 0.0F, dot_b = 0.0F;
             for(int i = 0; i < vlen; i++){
@@ -79,13 +79,18 @@ class HNSW {
             return dot_a * a->inv_mag > dot_b * b->inv_mag;
         };
         std::priority_queue<AriNode*, std::vector<AriNode*>, decltype(compare)> pqueue(compare);
-        std::set<AriNode*> visited; 
+        std::set<AriNode*, decltype(compare)> visited; 
         pqueue.push(entry);
         for(int i = m_lvl; i >= 0; i--){
             int added = 0;
-            while(!(pqueue.empty() || added >= insert_candidates)){
-                AriNode* cur = pqueue.pop();
-
+            while(!(pqueue.empty() || pqueue.size() + visited.size() >= insert_candidates)){
+                AriNode* cur = pqueue.top();
+                visited.insert(cur);
+                for(int j = 0; j < cur->nibling_count[i]; j++){
+                    if(visited.find(cur->niblings[level][j]) != visited.end()){
+                        pqueue.push(cur->niblings[level][j]);
+                    }
+                }
             }
         }
     }
