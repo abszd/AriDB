@@ -78,21 +78,43 @@ class HNSW {
             }
             return dot_a * a->inv_mag > dot_b * b->inv_mag;
         };
-        std::priority_queue<AriNode*, std::vector<AriNode*>, decltype(compare)> pqueue(compare);
-        std::set<AriNode*, decltype(compare)> visited; 
-        pqueue.push(entry);
+        //hypothetically min distance node from level m_lvl+1
+        AriNode * max = entry;
         for(int i = m_lvl; i >= 0; i--){
-            int added = 0;
-            while(!(pqueue.empty() || pqueue.size() + visited.size() >= insert_candidates)){
+            //  create pqueue and set, explore nodes and add every explored node to set
+            // this way we cna have better interconnectivity and connect distant parts better  
+            std::priority_queue<AriNode*, std::vector<AriNode*>, decltype(compare)> pqueue(compare);
+            std::set<AriNode*, decltype(compare)> visited; 
+            //push closest node from last level
+            pqueue.push(max);
+            
+            //look for next closest nodes until we dont have any or have searched ic amount of nodes
+            while(!(pqueue.empty() || visited.size() >= insert_candidates)){
                 AriNode* cur = pqueue.top();
                 visited.insert(cur);
                 for(int j = 0; j < cur->nibling_count[i]; j++){
+                    //if not visited add to pqueue
                     if(visited.find(cur->niblings[level][j]) != visited.end()){
                         pqueue.push(cur->niblings[level][j]);
-                    }
+                    } 
+                }
+                //remove node from pqueue
+                pqueue.pop();
+            }
+            auto iter = visited.begin(); 
+            max = (AriNode*)*iter;
+
+            if(level >= i){
+                                int16_t m_niblings = i == 0 ? max_dense : max_sparse;
+
+                toInsert->niblings[level] = new AriNode*[]
+                uint8_t nibs = 0;
+                for(;iter != visited.end() && nibs++ < m_niblings; iter++){
+                    toInsert->niblings[]
                 }
             }
         }
+
     }
 
     short find(){
