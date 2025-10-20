@@ -9,23 +9,9 @@
 #include <functional>
 #include <set>
 
-float Q_magv( float* vector, int size){
-    float mag = 0.0F;
-    for(int i = 0; i < size; i++){
-        mag += vector[i] * vector[i]; 
-    }
-    long i;
-    float x2, y;
-    float threehalfs = 1.5F;
-    x2 = mag * 0.5F;
-	y  = mag;
-	i  = * ( long * ) &y;                       // evil floating point bit level hacking
-	i  = 0x5f3759df - ( i >> 1 );               // what the fuck?
-	y  = * ( float * ) &i;
-	y  = y * ( threehalfs - ( x2 * y * y ) );   // 1st iteration
-//	y  = y * ( threehalfs - ( x2 * y * y ) );   // add this if weird stuff starts happening!!
-	return y;
-}
+
+
+
 
 struct AriNode {
     std::size_t hash;
@@ -59,6 +45,27 @@ class HNSW {
         srand(time(NULL));
     }
     /**
+     * Fast magnitude of vector
+     */
+    float Q_magv( float* vector, int size){
+        float mag = 0.0F;
+        for(int i = 0; i < size; i++){
+            mag += vector[i] * vector[i]; 
+        }
+        long i;
+        float x2, y;
+        float threehalfs = 1.5F;
+        x2 = mag * 0.5F;
+        y  = mag;
+        i  = * ( long * ) &y;                       // evil floating point bit level hacking
+        i  = 0x5f3759df - ( i >> 1 );               // what the fuck?
+        y  = * ( float * ) &i;
+        y  = y * ( threehalfs - ( x2 * y * y ) );   // 1st iteration
+    //	y  = y * ( threehalfs - ( x2 * y * y ) );   // add this if weird stuff starts happening!!
+        return y;
+    }
+    
+    /**
      * returns if a is closer to comp than b
      */
     bool cossmlr_compare(AriNode* comp, AriNode* a, AriNode* b){
@@ -70,6 +77,7 @@ class HNSW {
         return dot_a * a->inv_mag > dot_b * b->inv_mag;
     }
 
+    
     /**
      * insert a node into HNSW
      */
@@ -82,8 +90,8 @@ class HNSW {
         //Level calculation uniform random exponential decay
         uint8_t level = std::floorf(-std::logf((float) rand() / RAND_MAX) * m_lvl);
         toInsert->h_lvl = level;
-        toInsert->niblings = new AriNode**[level];
-        
+        toInsert->niblings = new AriNode**[level+1]();
+        toInsert->nibling_count = new uint8_t[level+1]();
         auto compare = [toInsert, this](AriNode* a, AriNode * b){
             float dot_a = 0.0F, dot_b = 0.0F;
             for(int i = 0; i < vlen; i++){
@@ -94,11 +102,15 @@ class HNSW {
         };
         //hypothetically min distance node from level m_lvl+1
         AriNode * max = entry;
+        if(entry == nullptr){
+            entry = toInsert;
+            return 0;
+        }
         for(int i = m_lvl; i >= 0; i--){
             // create pqueue and set, explore nodes and add every explored node to set
             // this way we cna have better interconnectivity and connect distant parts better  
             std::priority_queue<AriNode*, std::vector<AriNode*>, decltype(compare)> pqueue(compare);
-            std::set<AriNode*, decltype(compare)> visited; 
+            std::set<AriNode*, decltype(compare)> visited(compare); 
             //push closest node from last level
             pqueue.push(max);
             
@@ -108,8 +120,8 @@ class HNSW {
                 visited.insert(cur);
                 for(int j = 0; j < cur->nibling_count[i]; j++){
                     //if not visited add to pqueue
-                    if(visited.find(cur->niblings[level][j]) != visited.end()){
-                        pqueue.push(cur->niblings[level][j]);
+                    if(visited.find(cur->niblings[i][j]) == visited.end()){
+                        pqueue.push(cur->niblings[i][j]);
                     } 
                 }
                 //remove node from pqueue
@@ -131,17 +143,56 @@ class HNSW {
                     toInsert->niblings[i][nibs] = cur;
                     //if the neighbor has m_niblings nodes as neighbors then we might need to swap it
                     uint8_t cur_nibling_count = cur->nibling_count[i];
-                    if(cur_nibling_count == m_niblings && cossmlr_compare(cur, toInsert, cur->niblings[i][cur_nibling_count - 1])){
-                        
+                    if(cur_nibling_count < m_niblings){
+                        cur->niblings[i][cur->nibling_count[i]++] = toInsert;
                     }
+                    else if(cossmlr_compare(cur, toInsert, cur->niblings[i][cur_nibling_count - 1])){
+                        
+                        uint8_t l = 0, r = cur_nibling_count -1;
+                        //find first nibling that is farther than our insert
+                        
+                        while(l < r){
+                            uint8_t m = (l + r) / 2;
+                            if(cossmlr_compare(cur, toInsert, cur->niblings[i][m])){
+                                r = m;
+                            } else {
+                                l = m + 1;
+                            }
+                        }
+                        AriNode * evicted = cur->niblings[i][cur_nibling_count-1];
+                        //shift array, remove bidirectional from evicted node and set nibling
+                        for(int j = cur_nibling_count-1; j > l; j--){
+                            cur->niblings[i][j] = cur->niblings[i][j-1];
+                        }
+                        cur->niblings[i][l] = toInsert;
+
+                        //remove bidirectional linkage for evicted node
+                        l = 0, r = evicted->nibling_count[i] - 1;
+                        while(l < r){
+                            uint8_t m = (l+r)/2;
+                            if(cossmlr_compare(evicted, cur, evicted->niblings[i][m])){
+                                r = m;
+                            } else {
+                                l = m+1;
+                            }
+                        }
+                        //if we found the linkage in the other node (surely so) then shift it into non existence 
+                        if(evicted->niblings[i][l] == cur){
+                            for(int j = l; j < evicted->nibling_count[i]-1; j++){
+                                evicted->niblings[i][j] = evicted->niblings[i][j+1];
+                            }
+                            evicted->nibling_count[i]--;
+                        }
+                    }
+                    nibs++;
                 }
             }
         }
-
+        return 0;
     }
 
     short find(){
-
+        
     }
 
     short remove(){
