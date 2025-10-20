@@ -58,7 +58,21 @@ class HNSW {
         m_lvl = (int) std::floor(1/std::logf(max_dense));
         srand(time(NULL));
     }
+    /**
+     * returns if a is closer to comp than b
+     */
+    bool cossmlr_compare(AriNode* comp, AriNode* a, AriNode* b){
+        float dot_a = 0.0F, dot_b = 0.0F;
+        for(int i = 0; i < vlen; i++){
+            dot_a += comp->vector[i] * a->vector[i];
+            dot_b += comp->vector[i] * b->vector[i];
+        }
+        return dot_a * a->inv_mag > dot_b * b->inv_mag;
+    }
 
+    /**
+     * insert a node into HNSW
+     */
     short insert(size_t hash, float* vector){
         AriNode* toInsert = new AriNode();
         toInsert->hash = hash;
@@ -81,7 +95,7 @@ class HNSW {
         //hypothetically min distance node from level m_lvl+1
         AriNode * max = entry;
         for(int i = m_lvl; i >= 0; i--){
-            //  create pqueue and set, explore nodes and add every explored node to set
+            // create pqueue and set, explore nodes and add every explored node to set
             // this way we cna have better interconnectivity and connect distant parts better  
             std::priority_queue<AriNode*, std::vector<AriNode*>, decltype(compare)> pqueue(compare);
             std::set<AriNode*, decltype(compare)> visited; 
@@ -101,16 +115,25 @@ class HNSW {
                 //remove node from pqueue
                 pqueue.pop();
             }
+
+            //set max node as first in set
             auto iter = visited.begin(); 
             max = (AriNode*)*iter;
 
-            if(level >= i){
-                                int16_t m_niblings = i == 0 ? max_dense : max_sparse;
-
-                toInsert->niblings[level] = new AriNode*[]
+            //if were at a level where we should add the node 
+            if(i <= level){
+                int16_t m_niblings = i == 0 ? max_dense : max_sparse;
+                toInsert->niblings[i] = new AriNode*[m_niblings];
                 uint8_t nibs = 0;
-                for(;iter != visited.end() && nibs++ < m_niblings; iter++){
-                    toInsert->niblings[]
+                //iterate through the ordered set 
+                for(;iter != visited.end() && nibs < m_niblings; iter++){
+                    AriNode* cur = *iter;
+                    toInsert->niblings[i][nibs] = cur;
+                    //if the neighbor has m_niblings nodes as neighbors then we might need to swap it
+                    uint8_t cur_nibling_count = cur->nibling_count[i];
+                    if(cur_nibling_count == m_niblings && cossmlr_compare(cur, toInsert, cur->niblings[i][cur_nibling_count - 1])){
+                        
+                    }
                 }
             }
         }
