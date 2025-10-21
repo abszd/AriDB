@@ -1,8 +1,8 @@
+#include "HNSW.h"
 #include <cassert>
 #include <vector>
 #include <random>
 #include <chrono>
-#include <HNSW.h>
 #include <iostream>
 
 class HNSWTester {
@@ -21,22 +21,22 @@ public:
     void testFirstInsert() {
         HNSW index(128);
         float* vec = generateRandomVector(128);
-        
         assert(index.insert(1, vec) == 0);
         assert(index.size == 1);  // WILL FAIL with your bug
         assert(index.entry != nullptr);
         assert(index.entry->id == 1);
-        
+
         delete[] vec;
     }
     
     void testLevelDistribution() {
         HNSW index(128);
-        int level_counts[10] = {0};
         
         // Insert many nodes and check level distribution
         for(int i = 0; i < 10000; i++) {
+
             float* vec = generateRandomVector(128);
+
             index.insert(i, vec);
             // You'd need to expose node levels for this test
         }
@@ -63,8 +63,8 @@ public:
     void stressTestInsert() {
         HNSW index(128);
         auto start = std::chrono::high_resolution_clock::now();
-        
         for(int i = 0; i < 100000; i++) {
+            printf("%i: ", i);
             float* vec = generateRandomVector(128);
             try {
                 index.insert(i, vec);
@@ -73,7 +73,7 @@ public:
                 break;
             }
             
-            if(i % 10000 == 0) {
+            if(i>0 && i % 10000 == 0) {
                 auto now = std::chrono::high_resolution_clock::now();
                 auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
                 std::cout << "Inserted " << i << " in " << ms << "ms" << std::endl;
