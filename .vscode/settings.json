@@ -57,6 +57,7 @@
     "text_encoding": "cpp",
     "typeinfo": "cpp",
     "variant": "cpp",
-    "cstdarg": "cpp"
+    "cstdarg": "cpp",
+    "unordered_set": "cpp"
   }
 }

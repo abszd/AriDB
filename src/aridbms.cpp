@@ -11,11 +11,7 @@ using str = std::string;
 class AriDB {
     
 };
-/*
--- MGR FILE --
-|     Size    |           File Names           |
-|   2 Bytes   | 32 chars | 32 bytes |   ....   |   
-*/
+
 struct AriDBMSMgr {
     unsigned short size;
     char** fnames;

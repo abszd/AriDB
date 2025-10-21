@@ -8,22 +8,12 @@
 #include <queue>
 #include <functional>
 #include <set>
-
-
-
-
-
-struct AriNode {
-    std::size_t hash;
-    float* vector;
-    uint8_t h_lvl;
-    AriNode*** niblings;
-    uint8_t* nibling_count; 
-    float inv_mag;
-};
+#include <unordered_set>
+#include <HNSW.h>
 
 class HNSW {
-    AriNode * entry;
+public:
+    AriNode* entry;
     int size;
     uint8_t max_sparse;
     uint8_t max_dense;
@@ -32,8 +22,9 @@ class HNSW {
     uint16_t insert_candidates;
     uint16_t vlen; 
 
-
     HNSW(int vl, uint8_t ms = 16, uint8_t md = 32, uint16_t ic = 128, uint16_t sc = 64){
+        if(vl <= 0 || ms == 0 || md == 0) 
+            throw HNSWException(HNSWError::INVALID_PARAMS);
         size = 0;
         vlen = vl;
         max_sparse = ms;
@@ -41,29 +32,43 @@ class HNSW {
         insert_candidates = ic;
         search_candidates = sc;
         //dont plan on using larger than uint8_t max_dense so capped at 5 
-        m_lvl = (int) std::floor(1/std::logf(max_dense));
+        m_lvl = (int) std::floor(std::logf(max_dense));
         srand(time(NULL));
     }
-    /**
-     * Fast magnitude of vector
-     */
-    float Q_magv( float* vector, int size){
-        float mag = 0.0F;
-        for(int i = 0; i < size; i++){
-            mag += vector[i] * vector[i]; 
+
+    ~HNSW(){
+        if(entry == nullptr) return;
+        
+        std::unordered_set<AriNode*> visited;
+        std::queue<AriNode*> to_process;
+        to_process.push(entry);
+        
+        while(!to_process.empty()){
+            AriNode* cur = to_process.front();
+            to_process.pop();
+            
+            if(visited.find(cur) != visited.end()) continue;
+            visited.insert(cur);
+            
+            for(int i = 0; i <= cur->h_lvl; i++){
+                for(int j = 0; j < cur->nibling_count[i]; j++){
+                    if(visited.find(cur->niblings[i][j]) == visited.end()){
+                        to_process.push(cur->niblings[i][j]);
+                    }
+                }
+            }
         }
-        long i;
-        float x2, y;
-        float threehalfs = 1.5F;
-        x2 = mag * 0.5F;
-        y  = mag;
-        i  = * ( long * ) &y;                       // evil floating point bit level hacking
-        i  = 0x5f3759df - ( i >> 1 );               // what the fuck?
-        y  = * ( float * ) &i;
-        y  = y * ( threehalfs - ( x2 * y * y ) );   // 1st iteration
-    //	y  = y * ( threehalfs - ( x2 * y * y ) );   // add this if weird stuff starts happening!!
-        return y;
+        
+        for(AriNode* node : visited){
+            for(int i = 0; i <= node->h_lvl; i++){
+                delete[] node->niblings[i];
+            }
+            delete[] node->niblings;
+            delete[] node->nibling_count;
+            delete node;
+        }
     }
+
     
     /**
      * returns if a is closer to comp than b
@@ -74,21 +79,25 @@ class HNSW {
             dot_a += comp->vector[i] * a->vector[i];
             dot_b += comp->vector[i] * b->vector[i];
         }
-        return dot_a * a->inv_mag > dot_b * b->inv_mag;
+        return dot_a * comp->inv_mag * a->inv_mag > dot_b * comp->inv_mag * b->inv_mag;
     }
 
     
     /**
      * insert a node into HNSW
      */
-    short insert(size_t hash, float* vector){
+    short insert(size_t id, float* vector){
+        if(vector == nullptr) 
+            throw HNSWException(HNSWError::INVALID_VECTOR);
         AriNode* toInsert = new AriNode();
-        toInsert->hash = hash;
+        toInsert->id = id;
         toInsert->vector = vector;
-
         toInsert->inv_mag = Q_magv(vector, vlen); 
         //Level calculation uniform random exponential decay
         uint8_t level = std::floorf(-std::logf((float) rand() / RAND_MAX) * m_lvl);
+        if(entry == nullptr){
+            level = m_lvl;
+        }
         toInsert->h_lvl = level;
         toInsert->niblings = new AriNode**[level+1]();
         toInsert->nibling_count = new uint8_t[level+1]();
@@ -98,12 +107,13 @@ class HNSW {
                 dot_a += toInsert->vector[i] * a->vector[i];
                 dot_b += toInsert->vector[i] * b->vector[i];
             }
-            return dot_a * a->inv_mag > dot_b * b->inv_mag;
+            return dot_a * toInsert->inv_mag * a->inv_mag > dot_b * toInsert->inv_mag * b->inv_mag;
         };
         //hypothetically min distance node from level m_lvl+1
         AriNode * max = entry;
         if(entry == nullptr){
             entry = toInsert;
+            size++;
             return 0;
         }
         for(int i = m_lvl; i >= 0; i--){
@@ -116,21 +126,25 @@ class HNSW {
             
             //look for next closest nodes until we dont have any or have searched ic amount of nodes
             while(!(pqueue.empty() || visited.size() >= insert_candidates)){
-                AriNode* cur = pqueue.top();
+                AriNode* cur = pqueue.top(); pqueue.pop();
+                if(visited.find(cur) != visited.end()){
+                    continue;
+                }
                 visited.insert(cur);
                 for(int j = 0; j < cur->nibling_count[i]; j++){
                     //if not visited add to pqueue
                     if(visited.find(cur->niblings[i][j]) == visited.end()){
                         pqueue.push(cur->niblings[i][j]);
-                    } 
+                    } else {
+                        continue;
+                    }
                 }
-                //remove node from pqueue
-                pqueue.pop();
+
             }
 
             //set max node as first in set
             auto iter = visited.begin(); 
-            max = (AriNode*)*iter;
+            max = *iter;
 
             //if were at a level where we should add the node 
             if(i <= level){
@@ -182,20 +196,32 @@ class HNSW {
                                 evicted->niblings[i][j] = evicted->niblings[i][j+1];
                             }
                             evicted->nibling_count[i]--;
+                        } else {
+                            throw HNSWException(HNSWError::NO_EVICTBACKLINK);
                         }
                     }
                     nibs++;
                 }
+                toInsert->nibling_count[i] = nibs;
             }
         }
+        size++;
         return 0;
     }
-
-    short find(){
+    short scrub(AriNode* node){
         
     }
 
+    short find(){
+        if(entry == nullptr) 
+            throw HNSWException(HNSWError::EMPTY_DB);
+    }
+
     short remove(){
+
+    }
+
+    short clear(){
 
     }
 };
