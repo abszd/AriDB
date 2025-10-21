@@ -13,7 +13,7 @@ struct AriNode {
     u_int8_t h_lvl;
     AriNode*** niblings;
     u_int8_t* nibling_count; 
-    float inv_mag;
+    double inv_mag;
 
     std::string toString() const;
 

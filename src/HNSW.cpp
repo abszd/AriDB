@@ -48,7 +48,7 @@ HNSW::HNSW(int32_t vl, u_int8_t ms, u_int8_t md, u_int16_t ic, u_int16_t sc){
     insert_candidates = ic;
     search_candidates = sc;
     //dont plan on using larger than u_int8_t max_dense so capped at 5 
-    m_lvl = (int32_t) std::floor(std::logf(size));
+    m_lvl = 16;
     srand(time(NULL));
 }
 
@@ -94,7 +94,7 @@ bool HNSW::cossmlr_compare(AriNode* comp, AriNode* a, AriNode* b){
         dot_a += comp->vector[i] * a->vector[i];
         dot_b += comp->vector[i] * b->vector[i];
     }
-    return dot_a * comp->inv_mag * a->inv_mag > dot_b * comp->inv_mag * b->inv_mag;
+    return dot_a * a->inv_mag > dot_b * b->inv_mag;
 }
 
 /**
@@ -109,12 +109,10 @@ int16_t HNSW::insert(size_t id, float* vector){
     toInsert->inv_mag = Q_magv(vector, vlen); 
     //Level calculation uniform random exponential decay
     u_int8_t level = 0;
-    float r = (float) rand() / RAND_MAX;
-    if(r > 0.0F && r < 1.0F){
-        level = (u_int8_t) ((float)m_lvl, std::floor(-std::logf(r) * m_l));
-    }
-    if(entry == nullptr){
-        level = m_lvl;
+    float r = (float)rand() / RAND_MAX;
+    if(r > 0.0f && r < 1.0f){
+        float m_l = 1.0f / std::logf(max_dense);
+        level = (u_int8_t)std::min((int32_t)m_lvl, (int32_t)std::floor(-std::logf(r) * m_l));
     }
     toInsert->h_lvl = level;
     toInsert->niblings = new AriNode**[level+1]();
@@ -125,18 +123,16 @@ int16_t HNSW::insert(size_t id, float* vector){
             dot_a += toInsert->vector[i] * a->vector[i];
             dot_b += toInsert->vector[i] * b->vector[i];
         }
-        return dot_a * toInsert->inv_mag * a->inv_mag > dot_b * toInsert->inv_mag * b->inv_mag;
+        return dot_a * a->inv_mag > dot_b * b->inv_mag;
     };
     //hypothetically min distance node from level m_lvl+1
-    AriNode * max;
-    if(entry == nullptr){
+    if(entry == nullptr || toInsert->h_lvl > entry->h_lvl){
         entry = toInsert;
-        printf("entry created: %s", toInsert->toString().c_str());
-    } 
-    max = entry;
-    
-
-    for(int i = m_lvl; i >= 0; i--){
+        printf("entry created: %s\n", toInsert->toString().c_str());
+    }
+ 
+    AriNode * max = entry;
+    for(int i = entry->h_lvl; i >= 0; i--){
         // create pqueue and set, explore nodes and add every explored node to set
         // this way we cna have better interconnectivity and connect distant parts better  
         std::priority_queue<AriNode*, std::vector<AriNode*>, decltype(compare)> pqueue(compare);
@@ -162,7 +158,7 @@ int16_t HNSW::insert(size_t id, float* vector){
                     continue;
                 }
             }
-
+            pqueue.pop();
         }
 
         //set max node as first in set
@@ -177,6 +173,7 @@ int16_t HNSW::insert(size_t id, float* vector){
             //iterate through the ordered set 
             for(;iter != visited.end() && nibs < m_niblings; iter++){
                 AriNode* cur = *iter;
+                if(cur == toInsert) continue;
                 toInsert->niblings[i][nibs] = cur;
                 //if the neighbor has m_niblings nodes as neighbors then we might need to swap it
                 u_int8_t cur_nibling_count = cur->nibling_count[i];
@@ -213,16 +210,18 @@ int16_t HNSW::insert(size_t id, float* vector){
                             l = m+1;
                         }
                     }
-                    //if we found the linkage in the other node (surely so) then shift it into non existence 
-                    if(evicted->niblings[i][l] == cur){
+                    // After the loop, l should point to cur
+                    if(l < evicted->nibling_count[i] && evicted->niblings[i][l] == cur){
                         for(int32_t j = l; j < evicted->nibling_count[i]-1; j++){
                             evicted->niblings[i][j] = evicted->niblings[i][j+1];
                         }
                         evicted->nibling_count[i]--;
                     } else {
-                        printf("toInsert: %s\ncurrent: %s\nevicted: %s\n", toInsert->toString().c_str(), cur->toString().c_str(), evicted->toString().c_str());
-                        throw HNSWException(HNSWError::NO_EVICTBACKLINK);
-                    }
+    printf("Expected to find cur (id=%zu) at index %d, but found id=%zu\n", 
+           cur->id, (int)l, 
+           l < evicted->nibling_count[i] ? evicted->niblings[i][l]->id : 999999);
+    throw HNSWException(HNSWError::NO_EVICTBACKLINK);
+}
                 }
                 nibs++;
             }
