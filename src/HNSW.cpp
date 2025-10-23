@@ -13,14 +13,14 @@
 std::string AriNode::toString() const {
     std::stringstream ss;
     ss << "AriNode[id=" << id 
-       << ", h_lvl=" << (int)h_lvl 
-       << ", inv_mag=" << inv_mag;
+       << ", h_lvl=" << (int)h_lvl ;
+    //    << ", inv_mag=" << inv_mag;
     
-    ss << ", vector=[";
-    // Print first 5 elements or less if vector is shorter
-    // Note: We don't store vector length in AriNode, so this assumes you know it
-    ss << "...";  // Can't print without knowing vlen
-    ss << "]";
+    // ss << ", vector=[";
+    // // Print first 5 elements or less if vector is shorter
+    // // Note: We don't store vector length in AriNode, so this assumes you know it
+    // ss << "...";  // Can't print without knowing vlen
+    // ss << "]";
     
     ss << ", neighbors={";
     for(int32_t i = 0; i <= h_lvl; i++){
@@ -29,7 +29,7 @@ std::string AriNode::toString() const {
             ss << niblings[i][j]->id;
             if(j < nibling_count[i]-1) ss << ",";
         }
-        ss << "]";
+        ss << "]: " << (int)nibling_count[i] << " ";
         if(i < h_lvl) ss << ", ";
     }
     ss << "}]";
@@ -37,7 +37,7 @@ std::string AriNode::toString() const {
     return ss.str();
 }
 
-HNSW::HNSW(int32_t vl, u_int8_t ms, u_int8_t md, u_int16_t ic, u_int16_t sc){
+HNSW::HNSW(int32_t vl, uint8_t ms, uint8_t md, uint16_t ic, uint16_t sc){
     if(vl <= 0 || ms == 0 || md == 0) 
         throw HNSWException(HNSWError::INVALID_PARAMS);
     size = 0;
@@ -47,9 +47,9 @@ HNSW::HNSW(int32_t vl, u_int8_t ms, u_int8_t md, u_int16_t ic, u_int16_t sc){
     max_dense = md;
     insert_candidates = ic;
     search_candidates = sc;
-    //dont plan on using larger than u_int8_t max_dense so capped at 5 
+    //dont plan on using larger than uint8_t max_dense so capped at 5 
     m_lvl = 16;
-    srand(time(NULL));
+    srand(1);
 }
 
 HNSW::~HNSW(){
@@ -88,15 +88,61 @@ HNSW::~HNSW(){
 /**
  * returns if a is closer to comp than b
  */
-bool HNSW::cossmlr_compare(AriNode* comp, AriNode* a, AriNode* b){
+float HNSW::cossmlr_compare(AriNode* comp, AriNode* a, AriNode* b){
     float dot_a = 0.0F, dot_b = 0.0F;
     for(int32_t i = 0; i < vlen; i++){
         dot_a += comp->vector[i] * a->vector[i];
         dot_b += comp->vector[i] * b->vector[i];
     }
-    return dot_a * a->inv_mag > dot_b * b->inv_mag;
+    return dot_a * a->inv_mag - dot_b * b->inv_mag;
 }
 
+uint8_t HNSW::bs_ins_link(AriNode * target, AriNode* sorted, uint8_t level){
+    uint8_t c = sorted->nibling_count[level], l = 0, r = c - 1;
+    if(c == 0){
+        sorted->nibling_count[l] = 1;
+        sorted->niblings[level][l] = target;
+        return 0;
+    }
+    printf("%i", r);
+    while(l < r){
+        uint8_t m = (l+r)/2;
+        if(cossmlr_compare(sorted, target, sorted->niblings[level][m]) >= 0){
+            r = m ;
+        } 
+        else {
+            l = m+1;
+        }
+    }
+    for(int32_t j = c; j > l; j--){
+        sorted->niblings[level][j] = sorted->niblings[level][j-1];
+    }   
+    sorted->niblings[level][l] = target;
+    if(c < level == 0 ? max_dense : max_sparse )
+        sorted->nibling_count[level]++;
+    return l;
+}
+/**
+ * binary search a vector against a target
+ */
+uint8_t HNSW::bs_vec(AriNode * target, AriNode * sorted, uint8_t level){
+
+    uint8_t c = sorted->nibling_count[level], l = 0, r = c - 1;
+    if(c == 0){
+        return 0;
+    }
+    printf("%i", r);
+    while(l < r){
+        uint8_t m = (l+r)/2;
+        if(cossmlr_compare(sorted, target, sorted->niblings[level][m]) >= 0){
+            r = m ;
+        } 
+        else {
+            l = m+1;
+        }
+    }
+    return l;
+}
 /**
  * insert a node into HNSW
  */
@@ -108,15 +154,15 @@ int16_t HNSW::insert(size_t id, float* vector){
     toInsert->vector = vector;
     toInsert->inv_mag = Q_magv(vector, vlen); 
     //Level calculation uniform random exponential decay
-    u_int8_t level = 0;
+    uint8_t level = 0;
     float r = (float)rand() / RAND_MAX;
     if(r > 0.0f && r < 1.0f){
         float m_l = 1.0f / std::logf(max_dense);
-        level = (u_int8_t)std::min((int32_t)m_lvl, (int32_t)std::floor(-std::logf(r) * m_l));
+        level = (uint8_t)std::min((int32_t)m_lvl, (int32_t)std::floor(-std::logf(r) * m_l));
     }
     toInsert->h_lvl = level;
     toInsert->niblings = new AriNode**[level+1]();
-    toInsert->nibling_count = new u_int8_t[level+1]();
+    toInsert->nibling_count = new uint8_t[level+1]();
     auto compare = [toInsert, this](AriNode* a, AriNode * b){
         float dot_a = 0.0F, dot_b = 0.0F;
         for(int32_t i = 0; i < vlen; i++){
@@ -169,66 +215,43 @@ int16_t HNSW::insert(size_t id, float* vector){
         if(i <= level){
             int16_t m_niblings = i == 0 ? max_dense : max_sparse;
             toInsert->niblings[i] = new AriNode*[m_niblings];
-            u_int8_t nibs = 0;
             //iterate through the ordered set 
-            for(;iter != visited.end() && nibs < m_niblings; iter++){
+            for(;iter != visited.end() && toInsert->nibling_count[i] < m_niblings; iter++){
                 AriNode* cur = *iter;
-                if(cur == toInsert) continue;
-                toInsert->niblings[i][nibs] = cur;
+                // insert cur to insert
+                bs_ins_link(cur, toInsert, i);
                 //if the neighbor has m_niblings nodes as neighbors then we might need to swap it
-                u_int8_t cur_nibling_count = cur->nibling_count[i];
+                uint8_t cur_nibling_count = cur->nibling_count[i];
                 if(cur_nibling_count < m_niblings){
-                    cur->niblings[i][cur->nibling_count[i]++] = toInsert;
+                    uint8_t idx = bs_ins_link(toInsert, cur, i);
+                    printf("%s\n", toInsert->toString().c_str());
                 }
                 else if(cossmlr_compare(cur, toInsert, cur->niblings[i][cur_nibling_count - 1])){
-                    
-                    u_int8_t l = 0, r = cur_nibling_count -1;
-                    //find first nibling that is farther than our insert
-                    
-                    while(l < r){
-                        u_int8_t m = (l + r) / 2;
-                        if(cossmlr_compare(cur, toInsert, cur->niblings[i][m])){
-                            r = m;
-                        } else {
-                            l = m + 1;
-                        }
-                    }
+                    uint8_t idx = bs_vec(toInsert, cur, i);
                     AriNode * evicted = cur->niblings[i][cur_nibling_count-1];
                     //shift array, remove bidirectional from evicted node and set nibling
-                    for(int32_t j = cur_nibling_count-1; j > l; j--){
+                    for(int32_t j = cur_nibling_count-1; j > idx; j--){
                         cur->niblings[i][j] = cur->niblings[i][j-1];
                     }
-                    cur->niblings[i][l] = toInsert;
-
+                    cur->niblings[i][idx] = toInsert;
                     //remove bidirectional linkage for evicted node
-                    l = 0, r = evicted->nibling_count[i] - 1;
-                    while(l < r){
-                        u_int8_t m = (l+r)/2;
-                        if(cossmlr_compare(evicted, cur, evicted->niblings[i][m])){
-                            r = m;
-                        } else {
-                            l = m+1;
-                        }
-                    }
-                    // After the loop, l should point to cur
-                    if(l < evicted->nibling_count[i] && evicted->niblings[i][l] == cur){
-                        for(int32_t j = l; j < evicted->nibling_count[i]-1; j++){
-                            evicted->niblings[i][j] = evicted->niblings[i][j+1];
-                        }
-                        evicted->nibling_count[i]--;
-                    } else {
-    printf("Expected to find cur (id=%zu) at index %d, but found id=%zu\n", 
-           cur->id, (int)l, 
-           l < evicted->nibling_count[i] ? evicted->niblings[i][l]->id : 999999);
-    throw HNSWException(HNSWError::NO_EVICTBACKLINK);
-}
+                    idx = bs_vec(cur, evicted, i);
+//                     if(idx < evicted->nibling_count[i] && evicted->niblings[i][idx] == cur){
+//                         for(int32_t j = idx; j < evicted->nibling_count[i]-1; j++){
+//                             evicted->niblings[i][j] = evicted->niblings[i][j+1];
+//                         }
+//                         evicted->nibling_count[i]--;
+//                     } else {
+//     printf("Expected to find cur (id=%zu) at index %d, but found id=%zu\ncur: %s\nevicted: %s\n", 
+//            cur->id, (int)idx, 
+//            idx < evicted->nibling_count[i] ? evicted->niblings[i][idx]->id : 999999,
+//         cur->toString().c_str(), evicted->toString().c_str());
+//     throw HNSWException(HNSWError::NO_EVICTBACKLINK);
+// }
                 }
-                nibs++;
             }
-            toInsert->nibling_count[i] = nibs;
         }
     }
-    printf("%s\n", toInsert->toString().c_str());
     size++;
     return 0;
 }
@@ -250,6 +273,7 @@ int16_t HNSW::remove(){
 int16_t HNSW::clear(){
     return 0;
 }
+
 
 const char* HNSWException::what() const noexcept {
     switch(code) {

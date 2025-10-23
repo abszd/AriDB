@@ -7,11 +7,11 @@
 
 class HNSWTester {
 public:
-    std::mt19937 gen;
-    
+    std::mt19937 gen{1};
+    std::uniform_real_distribution<> dis{-1.0, 1.0};
+
     float* generateRandomVector(int dim) {
         float* vec = new float[dim];
-        std::uniform_real_distribution<> dis(-1.0, 1.0);
         for(int i = 0; i < dim; i++) {
             vec[i] = dis(gen);
         }
@@ -31,7 +31,6 @@ public:
     
     void testLevelDistribution() {
         HNSW index(128);
-        
         // Insert many nodes and check level distribution
         for(int i = 0; i < 10000; i++) {
 
