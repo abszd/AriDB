@@ -14,7 +14,7 @@ struct AriNode {
     AriNode*** niblings;
     uint8_t* nibling_count; 
     double inv_mag;
-
+    long address
     std::string toString() const;
 
 };
@@ -36,6 +36,7 @@ public:
     float cossmlr_compare(AriNode* comp, AriNode* a, AriNode* b);
     uint8_t bs_vec(AriNode* target, AriNode* sorted, uint8_t lvl);
     uint8_t bs_ins_link(AriNode* target, AriNode* sorted, uint8_t lvl);
+    uint8_t bs_rem_link(AriNode* target, AriNode* sorted, uint8_t lvl);
     int16_t insert(size_t id, float* vector);
     int16_t scrub(AriNode* node);
     int16_t find();

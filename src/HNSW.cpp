@@ -98,30 +98,53 @@ float HNSW::cossmlr_compare(AriNode* comp, AriNode* a, AriNode* b){
 }
 
 uint8_t HNSW::bs_ins_link(AriNode * target, AriNode* sorted, uint8_t level){
+    // printf("Before Link: %s\n", sorted->toString().c_str());
     uint8_t c = sorted->nibling_count[level], l = 0, r = c - 1;
+    uint8_t max_allowed = (level == 0) ? max_dense : max_sparse;
     if(c == 0){
-        sorted->nibling_count[l] = 1;
+        // printf("After Link1: %s\n", sorted->toString().c_str());
+        sorted->nibling_count[level] = 1;
         sorted->niblings[level][l] = target;
         return 0;
     }
-    printf("%i", r);
-    while(l < r){
-        uint8_t m = (l+r)/2;
-        if(cossmlr_compare(sorted, target, sorted->niblings[level][m]) >= 0){
-            r = m ;
-        } 
-        else {
-            l = m+1;
-        }
-    }
-    for(int32_t j = c; j > l; j--){
+    
+    uint8_t idx = bs_vec(target, sorted, level);
+
+    for(int32_t j = c; j > idx; j--){
         sorted->niblings[level][j] = sorted->niblings[level][j-1];
     }   
-    sorted->niblings[level][l] = target;
-    if(c < level == 0 ? max_dense : max_sparse )
+    sorted->niblings[level][idx] = target;
+    
+    if(c < max_allowed){
         sorted->nibling_count[level]++;
-    return l;
+    }
+    // printf("After Link2: %s\n", sorted->toString().c_str());
+    return idx;
 }
+
+uint8_t HNSW::bs_rem_link(AriNode* target, AriNode* sorted, uint8_t level){
+    uint8_t c = sorted->nibling_count[level];
+    if(c == 0){
+        return 1; // Not found
+    }
+    
+    uint8_t idx = bs_vec(target, sorted, level);
+    
+    // Verify we actually found the target node
+    if(idx >= c || sorted->niblings[level][idx] != target){
+        return 2; // Not found
+    }
+    
+    // Shift left to remove
+    for(int32_t j = idx; j < c - 1; j++){
+        sorted->niblings[level][j] = sorted->niblings[level][j + 1];
+    }
+
+    sorted->nibling_count[level]--;
+    
+    return 0;
+}
+
 /**
  * binary search a vector against a target
  */
@@ -131,9 +154,13 @@ uint8_t HNSW::bs_vec(AriNode * target, AriNode * sorted, uint8_t level){
     if(c == 0){
         return 0;
     }
-    printf("%i", r);
+    //printf("%i", r);
     while(l < r){
+        
         uint8_t m = (l+r)/2;
+        if(sorted->niblings[level][m] == target){
+            return m;
+        }
         if(cossmlr_compare(sorted, target, sorted->niblings[level][m]) >= 0){
             r = m ;
         } 
@@ -174,7 +201,7 @@ int16_t HNSW::insert(size_t id, float* vector){
     //hypothetically min distance node from level m_lvl+1
     if(entry == nullptr || toInsert->h_lvl > entry->h_lvl){
         entry = toInsert;
-        printf("entry created: %s\n", toInsert->toString().c_str());
+        //printf("entry created: %s\n", toInsert->toString().c_str());
     }
  
     AriNode * max = entry;
@@ -219,35 +246,49 @@ int16_t HNSW::insert(size_t id, float* vector){
             for(;iter != visited.end() && toInsert->nibling_count[i] < m_niblings; iter++){
                 AriNode* cur = *iter;
                 // insert cur to insert
-                bs_ins_link(cur, toInsert, i);
+                if(toInsert->niblings[i][bs_ins_link(cur, toInsert, i)] != cur){
+                    printf("FAILED TO INSERT c(%lli) INTO i(%lli)\n", cur->id, toInsert->id);
+                };
                 //if the neighbor has m_niblings nodes as neighbors then we might need to swap it
                 uint8_t cur_nibling_count = cur->nibling_count[i];
                 if(cur_nibling_count < m_niblings){
-                    uint8_t idx = bs_ins_link(toInsert, cur, i);
-                    printf("%s\n", toInsert->toString().c_str());
+                    if(cur->niblings[i][bs_ins_link(toInsert, cur, i)] != toInsert)
+                    {
+                        printf("FAILED TO INSERT i(%lli) INTO c(%lli)\n", toInsert->id, cur->id);
+                    };
+                    //printf("%s\n", toInsert->toString().c_str());
                 }
-                else if(cossmlr_compare(cur, toInsert, cur->niblings[i][cur_nibling_count - 1])){
+                else if(cossmlr_compare(cur, toInsert, cur->niblings[i][cur_nibling_count - 1]) > 0){
+
                     uint8_t idx = bs_vec(toInsert, cur, i);
-                    AriNode * evicted = cur->niblings[i][cur_nibling_count-1];
+                    AriNode* evicted = cur->niblings[i][cur_nibling_count-1];
                     //shift array, remove bidirectional from evicted node and set nibling
-                    for(int32_t j = cur_nibling_count-1; j > idx; j--){
-                        cur->niblings[i][j] = cur->niblings[i][j-1];
+                    if(cur->niblings[i][idx] == toInsert){
+                        for(int32_t j = cur_nibling_count-1; j > idx; j--){
+                            cur->niblings[i][j] = cur->niblings[i][j-1];
+                        }
+                    } else {
+                        printf("NODE i(%lli) EXPECTED IN IDX %i OF c(%lli) BUT IS r(%lli)\n", toInsert->id, idx, cur->id, cur->niblings[i][idx]->id);
                     }
                     cur->niblings[i][idx] = toInsert;
                     //remove bidirectional linkage for evicted node
                     idx = bs_vec(cur, evicted, i);
-//                     if(idx < evicted->nibling_count[i] && evicted->niblings[i][idx] == cur){
-//                         for(int32_t j = idx; j < evicted->nibling_count[i]-1; j++){
-//                             evicted->niblings[i][j] = evicted->niblings[i][j+1];
-//                         }
-//                         evicted->nibling_count[i]--;
-//                     } else {
-//     printf("Expected to find cur (id=%zu) at index %d, but found id=%zu\ncur: %s\nevicted: %s\n", 
-//            cur->id, (int)idx, 
-//            idx < evicted->nibling_count[i] ? evicted->niblings[i][idx]->id : 999999,
-//         cur->toString().c_str(), evicted->toString().c_str());
-//     throw HNSWException(HNSWError::NO_EVICTBACKLINK);
-// }
+
+                    if(evicted->niblings[i][idx] == cur){
+                        for(int32_t j = idx; j < evicted->nibling_count[i]-1; j++){
+                            evicted->niblings[i][j] = evicted->niblings[i][j+1];
+                        }
+                        evicted->nibling_count[i]--;
+                    } 
+                    bool found = false;
+                    for(int j = 0; j < evicted->nibling_count[i]; j++){
+                        if(evicted->niblings[i][j] == cur){
+                            found == true;
+                        }
+                    }
+                    if(found){
+                        printf("FAILED ")
+                    }
                 }
             }
         }
