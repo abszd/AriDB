@@ -287,7 +287,7 @@ int16_t HNSW::insert(size_t id, float* vector){
                         }
                     }
                     if(found){
-                        printf("FAILED ")
+                        printf("FAILED ");
                     }
                 }
             }

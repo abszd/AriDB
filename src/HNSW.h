@@ -14,9 +14,8 @@ struct AriNode {
     AriNode*** niblings;
     uint8_t* nibling_count; 
     double inv_mag;
-    long address
+    long address;
     std::string toString() const;
-
 };
 
 class HNSW {
