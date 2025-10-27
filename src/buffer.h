@@ -88,25 +88,20 @@ struct Node {
     uint64_t** neighbors;       // 2D array: neighbors[level][neighbor_idx]
     
     uint64_t node_id;           // Node's ID
-    uint16_t dim;               // Vector dimension (for memory management)
-    uint8_t max_level;          // Max possible level (for memory management)
-    uint8_t max_neighbors;      // Max neighbors per level
-    
-    Node(uint16_t d, uint8_t ml, uint8_t mn) 
-        : dim(d), max_level(ml), max_neighbors(mn) {
-        vector = new float[dim];
-        num_neighbors = new uint8_t[max_level + 1];
-        neighbors = new uint64_t*[max_level + 1];
-        for (int i = 0; i <= max_level; i++) {
+    Node(uint16_t d, uint8_t mn) {
+        vector = new float[d];
+        num_neighbors = new uint8_t[highest_level + 1];
+        neighbors = new uint64_t*[highest_level + 1];
+        for (int i = 0; i <= highest_level; i++) {
             num_neighbors[i] = 0;
-            neighbors[i] = new uint64_t[i == 0 ? max_neighbors * 2 : max_neighbors];
+            neighbors[i] = new uint64_t[i == 0 ? mn * 2 : mn];
         }
     }
     
     ~Node() {
         delete[] vector;
         delete[] num_neighbors;
-        for (int i = 0; i <= max_level; i++) {
+        for (int i = 0; i <= highest_level; i++) {
             delete[] neighbors[i];
         }
         delete[] neighbors;

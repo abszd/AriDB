@@ -175,7 +175,7 @@ Node* HNSWBuffer::deserializeNode(int frameno){
     char * level_pool_ptr;// level_pool + frameno * level_size 
     char * cursor = node_pool_ptr;
 
-    Node* node = new Node(header.dim, header.max_level, header.max_neighbors);
+    Node* node = new Node(header.dim, 0, header.max_neighbors);
     node->node_id = nodeTable[frameno].node_id;
 
     memcpy(node->vector, cursor, sizeof(float) * node->dim);
@@ -188,4 +188,7 @@ Node* HNSWBuffer::deserializeNode(int frameno){
     cursor += sizeof(double);
 
     memcpy(node->num_neighbors, cursor, sizeof(uint8_t) * header.max_level);
+    cursor += sizeof(uint8_t) * header.max_level;
+
+    
 }
