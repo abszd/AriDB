@@ -35,7 +35,7 @@ HNSWBuffer::HNSWBuffer(const char* filename, int num_frames){
         // New file - create default header
         memset(&header, 0, sizeof(HNSWHeader));
         header.dim = 128;  // Default or pass as parameter
-        header.max_level = 5;
+        header.max_level = 4;
         header.max_neighbors = 16;
         header.node_count = 0;
         header.entry_node_id = 0;
@@ -48,7 +48,7 @@ HNSWBuffer::HNSWBuffer(const char* filename, int num_frames){
     node_size += sizeof(uint8_t); // highest level in node
     node_size += sizeof(double); // inverse magnitude
     node_size += (header.max_level + 1) * sizeof(uint8_t); // num neighbors per level
-    node_size += (header.max_level * header.max_level) * sizeof(uint64_t); // neighbor ids  
+    node_size += (header.max_level * header.max_neighbors) * sizeof(uint64_t); // neighbor ids  
     node_size += header.max_neighbors * 2 * sizeof(uint64_t); // bottom level neighbor ids 
     
     nodePool = new char[node_size * num_frames];
@@ -141,6 +141,51 @@ int HNSWBuffer::readFrame(uint64_t node_id, int frame) {
 
     ssize_t bytes_read = read(fd, frame_data, node_size);
     if (bytes_read != node_size) {
-        throw std::runtime_error("Failed to read frame from disk");
+        throw error("Failed to read frame from disk");
     }
+
+    return 0;
+}
+
+
+Node* HNSWBuffer::getNode(uint64_t node_id){
+    //if the node is already loaded, get the frame number and extract it from the nodepool
+    if(hashTable.find(node_id) != hashTable.end()){
+        int frameno = hashTable[node_id];
+        NodeDesc * desc = &nodeTable[frameno];
+        
+        desc->pinCnt++;
+        desc->refbit = true;
+
+        return deserializeNode(frameno);
+    }
+
+    //otherwise we need to allocate a frame and load the node from memory
+    int frameno = allocFrame();
+    readFrame(node_id, frameno);
+    
+    nodeTable[frameno].Set(node_id);
+    hashTable[node_id] = frameno;
+
+    return deserializeNode(frameno);
+}
+
+Node* HNSWBuffer::deserializeNode(int frameno){
+    char * node_pool_ptr = nodePool + (frameno * node_size);
+    char * level_pool_ptr;// level_pool + frameno * level_size 
+    char * cursor = node_pool_ptr;
+
+    Node* node = new Node(header.dim, header.max_level, header.max_neighbors);
+    node->node_id = nodeTable[frameno].node_id;
+
+    memcpy(node->vector, cursor, sizeof(float) * node->dim);
+    cursor += sizeof(float) * node->dim;
+
+    node->highest_level = *((uint8_t *) cursor);
+    cursor += sizeof(uint8_t);
+
+    node->inv_magnitude = *((double*) cursor);
+    cursor += sizeof(double);
+
+    memcpy(node->num_neighbors, cursor, sizeof(uint8_t) * header.max_level);
 }
