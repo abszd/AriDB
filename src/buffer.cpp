@@ -5,7 +5,7 @@
 #include <sys/stat.h>
 
 // Standard library
-#include <cstdint>      // uint8_t, uint16_t, uint64_t
+#include <cstdint>      // uint8_t, uint16_t, uint32_t
 #include <cstring>      // memset, memcpy
 #include <stdexcept>    // std::runtime_error
 #include <unordered_map> // hash table
@@ -48,8 +48,8 @@ HNSWBuffer::HNSWBuffer(const char* filename, int num_frames){
     node_size += sizeof(uint8_t); // highest level in node
     node_size += sizeof(double); // inverse magnitude
     node_size += (header.max_level + 1) * sizeof(uint8_t); // num neighbors per level
-    node_size += (header.max_level * header.max_neighbors) * sizeof(uint64_t); // neighbor ids  
-    node_size += header.max_neighbors * 2 * sizeof(uint64_t); // bottom level neighbor ids 
+    node_size += (header.max_level * header.max_neighbors) * sizeof(uint32_t); // neighbor ids  
+    node_size += header.max_neighbors * 2 * sizeof(uint32_t); // bottom level neighbor ids 
     
     nodePool = new char[node_size * num_frames];
 
@@ -110,7 +110,7 @@ int HNSWBuffer::allocFrame()
  * write a frame to disk
  */
 int HNSWBuffer::writeFrame(int frame) {
-    uint64_t node_id = nodeTable[frame].node_id; // get node position 
+    uint32_t node_id = nodeTable[frame].node_id; // get node position 
     size_t offset = sizeof(HNSWHeader) + (node_id * node_size); // node offset
     char* frame_data = nodePool + (frame * node_size);
     
@@ -131,7 +131,7 @@ int HNSWBuffer::writeFrame(int frame) {
 /**
  * Read a given node_id from file into a given frame
  */
-int HNSWBuffer::readFrame(uint64_t node_id, int frame) {
+int HNSWBuffer::readFrame(uint32_t node_id, int frame) {
     size_t offset = sizeof(HNSWHeader) + (node_id * node_size); // node offset
     char* frame_data = nodePool + (frame * node_size);
 
@@ -148,7 +148,7 @@ int HNSWBuffer::readFrame(uint64_t node_id, int frame) {
 }
 
 
-Node* HNSWBuffer::getNode(uint64_t node_id){
+Node* HNSWBuffer::getNode(uint32_t node_id){
     //if the node is already loaded, get the frame number and extract it from the nodepool
     if(hashTable.find(node_id) != hashTable.end()){
         int frameno = hashTable[node_id];
