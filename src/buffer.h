@@ -17,7 +17,7 @@ private:
     
     // Buffer pool
     char* nodePool; // Raw bytes: frames * node_size
-    NodeDesc* nodeTable; // Metadata per frame
+    FrameDesc* nodeTable; // Metadata per frame
     std::unordered_map<uint32_t, int> hashTable; // node_id → frame
     
     // Helpers
@@ -30,8 +30,8 @@ private:
     Node* deserializeNode(int frame);  // Parse bytes → Node struct
     int serializeNode(Node* node, int frame);  // Node struct → bytes
     int writeFrame(int frame); // Write frame to disk
-    int readFrame(uint32_t node_id, int frame); // Read from disk
-    
+    uint32_t readFrame(uint32_t node_id, int frame); // Read from disk
+    int writeLevel(int frame);
 public:
     HNSWBuffer(const char* filename, int num_frames);
     ~HNSWBuffer();
@@ -52,8 +52,9 @@ struct HNSWHeader{
 };
 
 // Simple frame metadata
-struct NodeDesc {
+struct FrameDesc {
     uint32_t node_id;
+    uint32_t level_id;
     bool valid;
     bool dirty;
     int pinCnt;
@@ -75,12 +76,13 @@ struct NodeDesc {
         refbit = true;
     }
 
-    NodeDesc() {
+    FrameDesc() {
         Clear();
     }
 };
 
 struct Node {
+    uint32_t level_id;
     float* vector;              // Pointer to vector data (dim floats)
     uint8_t highest_level;      // Max level this node appears in
     double inv_magnitude;       // 1.0 / ||vector|| for cosine similarity
@@ -90,7 +92,7 @@ struct Node {
     uint32_t** neighbors;       // 2D array: neighbors[level][neighbor_idx]
     
     uint32_t node_id;           // Node's ID
-
+    uint16_t dim;
     Node(uint16_t d, uint8_t mn) {
         vector = new float[d];
         num_neighbors = new uint8_t[highest_level + 1];

@@ -23,7 +23,7 @@ HNSWBuffer::HNSWBuffer(const char* filename, int num_frames){
     if (fd < 0) {
         throw error("Failed to open file");
     }
-    nodeTable = new NodeDesc[num_frames]; 
+    nodeTable = new FrameDesc[num_frames]; 
     for (int i = 0; i < num_frames; i++)
     {
         nodeTable[i].Clear();
@@ -44,7 +44,8 @@ HNSWBuffer::HNSWBuffer(const char* filename, int num_frames){
         write(fd, &header, sizeof(HNSWHeader));
     }
     
-    node_size = header.dim * sizeof(float); // vector
+    node_size = sizeof(uint32_t); // level_id
+    node_size += header.dim * sizeof(float); // vector
     node_size += sizeof(uint8_t); // highest level in node
     node_size += sizeof(double); // inverse magnitude
     node_size += (header.max_level + 1) * sizeof(uint8_t); // num neighbors per level
@@ -67,7 +68,7 @@ int HNSWBuffer::allocFrame()
     {
         // Advance the clock hand. Does this first because clockHand is initialized to numBufs - 1. Advancing it will cause it to wrap around to 0
         advanceClock();
-        NodeDesc *curFrame = &nodeTable[clockHand]; // current frame we're checking
+        FrameDesc *curFrame = &nodeTable[clockHand]; // current frame we're checking
 
         if (!curFrame->valid) // if we have an invalid frame we can just allocoate
         {
@@ -131,7 +132,7 @@ int HNSWBuffer::writeFrame(int frame) {
 /**
  * Read a given node_id from file into a given frame
  */
-int HNSWBuffer::readFrame(uint32_t node_id, int frame) {
+uint32_t HNSWBuffer::readFrame(uint32_t node_id, int frame) {
     size_t offset = sizeof(HNSWHeader) + (node_id * node_size); // node offset
     char* frame_data = nodePool + (frame * node_size);
 
@@ -144,15 +145,17 @@ int HNSWBuffer::readFrame(uint32_t node_id, int frame) {
         throw error("Failed to read frame from disk");
     }
 
-    return 0;
+    uint32_t level_id = *(uint32_t *) frame_data; 
+    return level_id;
 }
+
 
 
 Node* HNSWBuffer::getNode(uint32_t node_id){
     //if the node is already loaded, get the frame number and extract it from the nodepool
     if(hashTable.find(node_id) != hashTable.end()){
         int frameno = hashTable[node_id];
-        NodeDesc * desc = &nodeTable[frameno];
+        FrameDesc * desc = &nodeTable[frameno];
         
         desc->pinCnt++;
         desc->refbit = true;
@@ -162,9 +165,10 @@ Node* HNSWBuffer::getNode(uint32_t node_id){
 
     //otherwise we need to allocate a frame and load the node from memory
     int frameno = allocFrame();
-    readFrame(node_id, frameno);
+    uint32_t level_id = readFrame(node_id, frameno);
     
     nodeTable[frameno].Set(node_id);
+    nodeTable[frameno].level_id = level_id;
     hashTable[node_id] = frameno;
 
     return deserializeNode(frameno);
@@ -175,11 +179,12 @@ Node* HNSWBuffer::deserializeNode(int frameno){
     char * level_pool_ptr;// level_pool + frameno * level_size 
     char * cursor = node_pool_ptr;
 
-    Node* node = new Node(header.dim, 0, header.max_neighbors);
+    Node* node = new Node(header.dim, header.max_neighbors);
     node->node_id = nodeTable[frameno].node_id;
 
-    memcpy(node->vector, cursor, sizeof(float) * node->dim);
-    cursor += sizeof(float) * node->dim;
+    node->level_id = *((uint32_t *) cursor);
+    memcpy(node->vector, cursor, sizeof(float) * header.dim);
+    cursor += sizeof(float) * header.dim;
 
     node->highest_level = *((uint8_t *) cursor);
     cursor += sizeof(uint8_t);
