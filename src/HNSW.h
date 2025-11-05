@@ -9,8 +9,8 @@
 
 struct AriNode {
     size_t id;
-    float* vector;
     uint8_t h_lvl;
+    float* vector;
     AriNode*** niblings;
     uint8_t* nibling_count; 
     double inv_mag;

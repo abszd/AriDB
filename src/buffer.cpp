@@ -17,6 +17,28 @@
 
 typedef std::runtime_error error;
 
+// Calculate which pool index to use based on highest_level
+// Pool[i] stores 2^i sets of neighbors (1, 2, 4, 8, 16 sets respectively)
+// A node with highest_level needs (highest_level) sets for levels 1 through highest_level
+// We find the smallest pool that has enough capacity: 2^i >= highest_level
+// For highest_level = 5, we need 5 sets, so we need pool[3] (which has 8 sets >= 5)
+// Returns pool index (0 to NUM_LEVELS-1) or 0 if highest_level == 0
+uint8_t HNSWBuffer::getPoolIndex(uint8_t highest_level) {
+    if (highest_level == 0) {
+        return 0; // No pool needed, everything in nodePool
+    }
+    // Find smallest i where 2^i >= highest_level
+    // This is ceil(log2(highest_level))
+    // For highest_level=5: need pool where 2^i >= 5, so i=3 (2^3=8 >= 5)
+    uint8_t pool_idx = 0;
+    uint8_t capacity = 1; // 2^0 = 1
+    while (capacity < highest_level && pool_idx < NUM_LEVELS - 1) {
+        pool_idx++;
+        capacity = 1 << pool_idx; // 2^pool_idx
+    }
+    return pool_idx;
+}
+
 HNSWBuffer::HNSWBuffer(const char* filename, int num_frames){
     numFrames = num_frames; 
     fd = open(filename, O_RDWR | O_CREAT, 0644);
@@ -37,26 +59,59 @@ HNSWBuffer::HNSWBuffer(const char* filename, int num_frames){
         header.dim = 128;  // Default or pass as parameter
         header.max_level = 4;
         header.max_neighbors = 16;
+        header.max_seen_level = 0;
         header.node_count = 0;
         header.entry_node_id = 0;
         
         lseek(fd, 0, SEEK_SET);
         write(fd, &header, sizeof(HNSWHeader));
     }
-    
+    levelfd = new int[header.max_level];
+    for(int i = 0; i < header.max_seen_level; i++){
+        levelfd[i] = open(filename, O_RDWR , 0644);
+        if (levelfd[i] < 0) {
+            throw error("Failed to open file");
+        }
+    }
+
     node_size = sizeof(uint32_t); // level_id
     node_size += header.dim * sizeof(float); // vector
     node_size += sizeof(uint8_t); // highest level in node
     node_size += sizeof(double); // inverse magnitude
-    node_size += (header.max_level + 1) * sizeof(uint8_t); // num neighbors per level
-    node_size += (header.max_level * header.max_neighbors) * sizeof(uint32_t); // neighbor ids  
-    node_size += header.max_neighbors * 2 * sizeof(uint32_t); // bottom level neighbor ids 
+    node_size += sizeof(uint8_t); // num neighbors at level 0
+    level_size = sizeof(uint32_t) * header.max_neighbors;
+    node_size += level_size * 2; // bottom level neighbor ids 
     
     nodePool = new char[node_size * num_frames];
 
+    levelPool = new char*[NUM_LEVELS];
+    levelPoolSize = new size_t[NUM_LEVELS]; // Track actual allocated size
+    for(int i = 0; i < NUM_LEVELS; i++){ 
+        levelPool[i] = nullptr; // Start with null - allocate dynamically when needed
+        levelPoolSize[i] = 0;
+    }
     clockHand = num_frames - 1;
 }
 
+HNSWBuffer::~HNSWBuffer(){
+    if (nodePool) delete[] nodePool;
+    if (nodeTable) delete[] nodeTable;
+    if (levelfd) delete[] levelfd;
+    
+    // Clean up level pools
+    if (levelPool) {
+        for(int i = 0; i < NUM_LEVELS; i++) {
+            if (levelPool[i]) delete[] levelPool[i];
+        }
+        delete[] levelPool;
+    }
+    if (levelPoolSize) delete[] levelPoolSize;
+    
+    if (fd >= 0) close(fd);
+    for(int i = 0; i < header.max_seen_level && levelfd; i++) {
+        if (levelfd[i] >= 0) close(levelfd[i]);
+    }
+}
 /**
  * allocate a frame for a new node
  */
@@ -110,11 +165,15 @@ int HNSWBuffer::allocFrame()
 /**
  * write a frame to disk
  */
+
 int HNSWBuffer::writeFrame(int frame) {
     uint32_t node_id = nodeTable[frame].node_id; // get node position 
+    uint32_t level_id = nodeTable[frame].level_id;
+    uint8_t lvl = nodeTable[frame].level_id >> 32;
     size_t offset = sizeof(HNSWHeader) + (node_id * node_size); // node offset
-    char* frame_data = nodePool + (frame * node_size);
     
+    char* frame_data = nodePool + (frame * node_size);
+
     // Seek to position
     if (lseek(fd, offset, SEEK_SET) == -1) {
         throw error("Failed to seek in file");
@@ -125,6 +184,8 @@ int HNSWBuffer::writeFrame(int frame) {
     if (bytes_written != node_size) {
         throw error("Failed to write frame to disk");
     }
+
+
     
     nodeTable[frame].dirty = false;
 }
@@ -174,15 +235,20 @@ Node* HNSWBuffer::getNode(uint32_t node_id){
     return deserializeNode(frameno);
 }
 
+
 Node* HNSWBuffer::deserializeNode(int frameno){
     char * node_pool_ptr = nodePool + (frameno * node_size);
-    char * level_pool_ptr;// level_pool + frameno * level_size 
+    char * level_pool_ptr;
     char * cursor = node_pool_ptr;
 
     Node* node = new Node(header.dim, header.max_neighbors);
     node->node_id = nodeTable[frameno].node_id;
 
+    // Read level_id (first uint32_t)
     node->level_id = *((uint32_t *) cursor);
+    cursor += sizeof(uint32_t);
+    
+    // Read vector
     memcpy(node->vector, cursor, sizeof(float) * header.dim);
     cursor += sizeof(float) * header.dim;
 
@@ -192,8 +258,50 @@ Node* HNSWBuffer::deserializeNode(int frameno){
     node->inv_magnitude = *((double*) cursor);
     cursor += sizeof(double);
 
-    memcpy(node->num_neighbors, cursor, sizeof(uint8_t) * header.max_level);
-    cursor += sizeof(uint8_t) * header.max_level;
+    node->num_zneighbors = *((uint8_t*) cursor);
+    cursor += sizeof(uint8_t);
 
+    // Read level 0 neighbors (zneighbors) - stored as uint32_t array
+    memcpy(node->zneighbors, cursor, sizeof(uint32_t) * header.max_neighbors * 2);
+    cursor += sizeof(uint32_t) * header.max_neighbors * 2;
     
+    
+    if(node->highest_level == 0){
+        return node;
+    }
+
+    // For nodes with higher levels, load from appropriate level pool
+    uint8_t pool_idx = getPoolIndex(node->highest_level);
+    uint32_t pool_offset = (uint32_t)(nodeTable[frameno].level_id & 0xFFFFFFFF); // Lower 32 bits
+    
+    // Calculate size per entry in this pool: 2^pool_idx sets of neighbors + num_neighbors array
+    uint8_t sets_in_pool = 1 << pool_idx; // 2^pool_idx sets
+    size_t entry_size = (sets_in_pool * level_size) + (sizeof(uint8_t) * node->highest_level);
+    
+    // Ensure pool is allocated
+    if (!levelPool[pool_idx]) {
+        // TODO: Allocate pool dynamically when needed
+        throw error("Level pool not allocated - need dynamic allocation");
+    }
+    
+    // Get pointer to this node's level data in the pool
+    level_pool_ptr = levelPool[pool_idx] + (pool_offset * entry_size);
+    
+    // Read num_neighbors array (one per level 1 through highest_level)
+    node->num_neighbors = new uint8_t[node->highest_level + 1];
+    node->num_neighbors[0] = node->num_zneighbors; // Level 0 already read
+    memcpy(node->num_neighbors + 1, level_pool_ptr, sizeof(uint8_t) * node->highest_level);
+    level_pool_ptr += sizeof(uint8_t) * node->highest_level;
+    
+    // Allocate and read neighbor arrays for levels 1 to highest_level
+    node->neighbors = new uint32_t*[node->highest_level + 1];
+    node->neighbors[0] = node->zneighbors; // Level 0 already set
+    
+    for(int i = 1; i <= node->highest_level; i++){
+        node->neighbors[i] = new uint32_t[header.max_neighbors];
+        memcpy(node->neighbors[i], level_pool_ptr, level_size);
+        level_pool_ptr += level_size;
+    }
+    
+    return node;
 }

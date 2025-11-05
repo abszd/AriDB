@@ -10,6 +10,7 @@
 #include <set>
 #include <unordered_set>
 
+
 std::string AriNode::toString() const {
     std::stringstream ss;
     ss << "AriNode[id=" << id 
