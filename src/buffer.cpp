@@ -169,7 +169,7 @@ int HNSWBuffer::allocFrame()
 int HNSWBuffer::writeFrame(int frame) {
     uint32_t node_id = nodeTable[frame].node_id; // get node position 
     uint32_t level_id = nodeTable[frame].level_id;
-    uint8_t lvl = nodeTable[frame].level_id >> 32;
+    uint8_t lvl = getPoolIndex(nodeTable[frame].level_id >> 32);
     size_t offset = sizeof(HNSWHeader) + (node_id * node_size); // node offset
     
     char* frame_data = nodePool + (frame * node_size);
@@ -184,9 +184,27 @@ int HNSWBuffer::writeFrame(int frame) {
     if (bytes_written != node_size) {
         throw error("Failed to write frame to disk");
     }
+    if(lvl == 0){
+        return 0;
+    }
 
+    int mult = 1;
+    int tmp = lvl;
+    while(tmp != 1){
+        tmp >>= 1;
+        mult <<= 1;
+    }
 
+    size_t level_offset = level_id * levelPoolSize[lvl-1];
+    char * level_data = levelPool[lvl-1] + (level_id * levelPoolSize[lvl-1]);
     
+    if (lseek(levelfd[lvl-1], level_offset, SEEK_SET) == -1) {
+        throw error("Failed to seek in file");
+    }
+    bytes_written = write(levelfd[lvl-1], level_data, levelPoolSize[lvl-1]);
+    if (bytes_written != levelPoolSize[lvl-1]) {
+        throw error("Failed to write frame to disk");
+    }
     nodeTable[frame].dirty = false;
 }
 
@@ -209,8 +227,6 @@ uint32_t HNSWBuffer::readFrame(uint32_t node_id, int frame) {
     uint32_t level_id = *(uint32_t *) frame_data; 
     return level_id;
 }
-
-
 
 Node* HNSWBuffer::getNode(uint32_t node_id){
     //if the node is already loaded, get the frame number and extract it from the nodepool
@@ -235,6 +251,9 @@ Node* HNSWBuffer::getNode(uint32_t node_id){
     return deserializeNode(frameno);
 }
 
+void releaseNode(uint32_t node_id, bool dirty){
+    nodeTable[node_id]
+}
 
 Node* HNSWBuffer::deserializeNode(int frameno){
     char * node_pool_ptr = nodePool + (frameno * node_size);
@@ -249,6 +268,7 @@ Node* HNSWBuffer::deserializeNode(int frameno){
     cursor += sizeof(uint32_t);
     
     // Read vector
+    node->vector = new float[header.dim];
     memcpy(node->vector, cursor, sizeof(float) * header.dim);
     cursor += sizeof(float) * header.dim;
 
@@ -272,7 +292,7 @@ Node* HNSWBuffer::deserializeNode(int frameno){
 
     // For nodes with higher levels, load from appropriate level pool
     uint8_t pool_idx = getPoolIndex(node->highest_level);
-    uint32_t pool_offset = (uint32_t)(nodeTable[frameno].level_id & 0xFFFFFFFF); // Lower 32 bits
+    uint32_t pool_offset = (uint32_t)(nodeTable[frameno].level_id); // Lower 32 bits
     
     // Calculate size per entry in this pool: 2^pool_idx sets of neighbors + num_neighbors array
     uint8_t sets_in_pool = 1 << pool_idx; // 2^pool_idx sets

@@ -44,6 +44,7 @@ private:
     int writeFrame(int frame); // Write frame to disk
     uint32_t readFrame(uint32_t node_id, int frame); // Read from disk
     int writeLevel(int frame);
+    
 public:
     HNSWBuffer(const char* filename, int num_frames);
     ~HNSWBuffer();
