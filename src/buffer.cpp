@@ -50,7 +50,6 @@ HNSWBuffer::HNSWBuffer(const char* filename, int num_frames){
     {
         nodeTable[i].Clear();
     }
-
     // Read or create header
     ssize_t bytes = read(fd, &header, sizeof(HNSWHeader));
     if (bytes != sizeof(HNSWHeader)) {
@@ -164,7 +163,7 @@ int HNSWBuffer::allocFrame()
 
 Node* HNSWBuffer::addNode(Node* new_node){
     allocFrame();
-    
+
 }
 /**
  * write a frame to disk
