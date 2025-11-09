@@ -162,9 +162,13 @@ int HNSWBuffer::allocFrame()
     throw error("ALLOCFRAME: CLOCKHAND REACHED END OF BUFFER"); // If we reach this weve tried every frame and allowed for the reference bit to switch
 }
 
+Node* HNSWBuffer::addNode(Node* new_node){
+    allocFrame();
+    
+}
 /**
  * write a frame to disk
- */
+ */    
 
 int HNSWBuffer::writeFrame(int frame) {
     uint32_t node_id = nodeTable[frame].node_id; // get node position 
@@ -251,8 +255,18 @@ Node* HNSWBuffer::getNode(uint32_t node_id){
     return deserializeNode(frameno);
 }
 
-void releaseNode(uint32_t node_id, bool dirty){
-    nodeTable[node_id]
+void HNSWBuffer::releaseNode(uint32_t node_id, bool dirty){
+    if(hashTable.find(node_id) == hashTable.end()){
+        throw error("ReleaseNode: unable to find nod_id in hashtable");
+    }
+
+    int frameno = hashTable[node_id];
+    FrameDesc * frame_data = &nodeTable[frameno];
+    if(dirty){
+        writeFrame(frameno);
+    }
+
+    frame_data->pinCnt--;
 }
 
 Node* HNSWBuffer::deserializeNode(int frameno){

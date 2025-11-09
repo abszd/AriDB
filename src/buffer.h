@@ -11,7 +11,7 @@ class HNSWBuffer {
 private:
     int numFrames; // How many nodes fit in memory
     size_t node_size; // Bytes per node (calculated from header)
-    size_t level_size;
+    size_t size;
     int clockHand; // For clock eviction
     HNSWHeader header;
     
@@ -50,6 +50,7 @@ public:
     ~HNSWBuffer();
     
     // Main API
+    Node* addNode(Node* new_node);
     Node* getNode(uint32_t node_id);              // Load node (pin it)
     void releaseNode(uint32_t node_id, bool dirty); // Unpin node
     void flush();                                   // Write all dirty
