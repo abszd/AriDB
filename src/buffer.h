@@ -11,7 +11,7 @@ class HNSWBuffer {
 private:
     int numFrames; // How many nodes fit in memory
     size_t node_size; // Bytes per node (calculated from header)
-    size_t size;
+    size_t level_size;
     int clockHand; // For clock eviction
     HNSWHeader header;
     

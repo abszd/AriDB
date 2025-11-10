@@ -160,9 +160,18 @@ int HNSWBuffer::allocFrame()
     }
     throw error("ALLOCFRAME: CLOCKHAND REACHED END OF BUFFER"); // If we reach this weve tried every frame and allowed for the reference bit to switch
 }
-
+ 
 Node* HNSWBuffer::addNode(Node* new_node){
-    allocFrame();
+    int frameno = allocFrame();
+    size_t node_id = header.node_count++;
+    size_t offset = sizeof(HNSWHeader) + (node_id * node_size);
+    
+    new_node->node_id = node_id;
+
+    if (lseek(fd, offset, SEEK_SET) == -1) {
+        throw error("Failed to seek in file");
+    }
+
 
 }
 /**
